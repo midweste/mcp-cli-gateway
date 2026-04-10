@@ -1,0 +1,7 @@
+# Compiled binary — treat as binary, no diff
+mcp-gemini-gateway binary
+
+# SQLite databases — treat as binary, no diff
+data/*.sqlite binary
+data/*.sqlite-wal binary
+data/*.sqlite-shm binary
