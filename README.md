@@ -19,50 +19,45 @@ The gateway auto-selects the best available provider based on load and CLI avail
 ### Install
 
 ```bash
-cd ~/.claude/mcp/mcp-cli-gateway
+git clone https://github.com/midweste/mcp-cli-gateway.git
+cd mcp-cli-gateway
 make setup   # copy .env, tidy deps, create data dir
 make build   # build the binary
 ```
 
 ### Register as MCP Server
 
-#### Automated
+#### Claude Code
 
-```bash
-make install-mcp   # registers in Antigravity mcp_config.json
-```
-
-#### Manual — Claude Code
-
-Add to `~/.claude/mcp.json`:
+Add to your `mcp.json` config:
 
 ```json
 {
   "mcpServers": {
     "mcp-cli-gateway": {
-      "command": "/home/USER/.claude/mcp/mcp-cli-gateway/mcp-cli-gateway",
+      "command": "/absolute/path/to/mcp-cli-gateway/mcp-cli-gateway",
       "args": []
     }
   }
 }
 ```
 
-#### Manual — Antigravity (Gemini)
+#### Antigravity (Gemini)
 
-Add to `~/.gemini/antigravity/mcp_config.json`:
+Add to your `mcp_config.json`:
 
 ```json
 {
   "mcpServers": {
     "mcp-cli-gateway": {
-      "command": "/home/USER/.claude/mcp/mcp-cli-gateway/mcp-cli-gateway",
+      "command": "/absolute/path/to/mcp-cli-gateway/mcp-cli-gateway",
       "args": []
     }
   }
 }
 ```
 
-> Replace `/home/USER` with your actual home directory path.
+> Replace `/absolute/path/to` with the actual directory where the binary expects to run.
 
 ---
 
@@ -155,7 +150,7 @@ GATEWAY_PROVIDER_CLAUDE=true    # force enable
 All data lives next to the binary — never in project directories:
 
 ```
-~/.claude/mcp/mcp-cli-gateway/
+mcp-cli-gateway/
 ├── data/
 │   └── mcp-cli-gateway.sqlite   # Job queue, pacing state, request history
 ├── .env                          # Configuration overrides
@@ -180,7 +175,6 @@ All data lives next to the binary — never in project directories:
 | `make check` | Vet + test in one command |
 | `make clean` | Remove build artifacts |
 | `make install` | Install binary to `GOPATH/bin` |
-| `make install-mcp` | Register in Antigravity `mcp_config.json` |
 
 ## Architecture
 
