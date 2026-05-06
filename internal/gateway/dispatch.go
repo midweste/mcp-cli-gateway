@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -71,14 +70,17 @@ func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.Di
 	var requestID int64
 
 	for attempt := range g.cfg.MAX_RETRIES() + 1 {
-		// ── Atomic queue check + pacing reservation ──
-		running, err := g.store.CountRunning(ctx, model)
-		if err != nil {
-			return nil, fmt.Errorf("count running: %w", err)
-		}
-		pending, err := g.store.CountPending(ctx, model)
-		if err != nil {
-			return nil, fmt.Errorf("count pending: %w", err)
+		// ── Queue/concurrency checks (first attempt only) ──
+		var running, pending int
+		if attempt == 0 {
+			running, err = g.store.CountRunning(ctx, model)
+			if err != nil {
+				return nil, fmt.Errorf("count running: %w", err)
+			}
+			pending, err = g.store.CountPending(ctx, model)
+			if err != nil {
+				return nil, fmt.Errorf("count pending: %w", err)
+			}
 		}
 
 		// Queue full check (first attempt only)
@@ -116,7 +118,7 @@ func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.Di
 				dbReq := &domain.Request{
 					Model: model, Status: "queued", Label: req.Label,
 					PromptHash: phash, PromptText: req.Prompt,
-					PID: os.Getpid(), Cwd: req.Cwd,
+					Cwd: req.Cwd,
 					CreatedAt: domain.NowUnix(), BatchID: req.BatchID,
 				}
 				requestID, err = g.store.InsertRequest(ctx, dbReq)
@@ -160,7 +162,7 @@ func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.Di
 			dbReq := &domain.Request{
 				Model: model, Status: "waiting", Label: req.Label,
 				PromptHash: phash, PromptText: req.Prompt,
-				PID: os.Getpid(), Cwd: req.Cwd,
+				Cwd: req.Cwd,
 				CreatedAt: domain.NowUnix(), BatchID: req.BatchID,
 			}
 			requestID, err = g.store.InsertRequest(ctx, dbReq)

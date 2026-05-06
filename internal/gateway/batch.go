@@ -87,9 +87,8 @@ func (g *Gateway) RunBatch(ctx context.Context, jobs []DispatchRequest) ([]domai
 
 	batchID := fmt.Sprintf("batch-%08x", rand.Int31())
 
-	// Results collected concurrently
+	// Results collected concurrently — each goroutine writes to a unique index.
 	results := make([]domain.BatchResult, len(jobs))
-	var mu sync.Mutex
 	var wg sync.WaitGroup
 
 	for _, group := range modelGroups {
@@ -117,9 +116,7 @@ func (g *Gateway) RunBatch(ctx context.Context, jobs []DispatchRequest) ([]domai
 					}
 				}
 
-				mu.Lock()
 				results[ij.index] = br
-				mu.Unlock()
 			}
 		}(group)
 	}

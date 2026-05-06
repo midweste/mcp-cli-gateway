@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"os"
 	"sort"
-	"syscall"
 	"time"
 
 	"github.com/midweste/mcp-cli-gateway/internal/domain"
@@ -15,8 +13,6 @@ import (
 const (
 	// maxErrorLen caps error messages stored in the database.
 	maxErrorLen = 500
-	// gracefulShutdownDelay is the time between SIGTERM and SIGKILL in killProcess.
-	gracefulShutdownDelay = 500 * time.Millisecond
 )
 
 // Status returns queue status per model with health indicator.
@@ -307,9 +303,6 @@ func (g *Gateway) Cancel(ctx context.Context, jobID string, modelAlias string, b
 
 	cancelled := make([]int64, 0)
 	for _, r := range requests {
-		if r.Status == "running" && r.PID > 0 {
-			killProcess(r.PID)
-		}
 		_ = g.store.UpdateStatus(ctx, r.ID, "cancelled", map[string]any{
 			"error":       "cancelled by user",
 			"finished_at": domain.NowUnix(),
@@ -357,18 +350,3 @@ func (g *Gateway) Result(ctx context.Context, jobID int64) (*domain.Request, err
 	return g.store.GetRequest(ctx, jobID)
 }
 
-func killProcess(pid int) {
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return
-	}
-	_ = proc.Signal(syscall.SIGTERM) // best-effort
-
-	// Escalate to SIGKILL after grace period without blocking the caller.
-	go func() {
-		timer := time.NewTimer(gracefulShutdownDelay)
-		defer timer.Stop()
-		<-timer.C
-		_ = proc.Signal(syscall.SIGKILL) // best-effort
-	}()
-}
