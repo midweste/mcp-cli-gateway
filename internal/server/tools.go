@@ -51,6 +51,10 @@ func (s *MCPServer) registerTools() {
 				dr.Sandbox = v
 			}
 
+			if dr.Prompt == "" {
+				return mcp.NewToolResultError("prompt is required and must not be empty"), nil
+			}
+
 			if err := validateCwdAgainstRoots(ctx, s.mcp, dr.Cwd); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -132,8 +136,13 @@ func (s *MCPServer) registerTools() {
 				jobs = append(jobs, dr)
 			}
 
-			// Validate all cwds against roots
+			// Validate all prompts and cwds
 			for i, j := range jobs {
+				if j.Prompt == "" {
+					return mcp.NewToolResultError(
+						fmt.Sprintf("jobs[%d]: prompt is required and must not be empty", i),
+					), nil
+				}
 				if err := validateCwdAgainstRoots(ctx, s.mcp, j.Cwd); err != nil {
 					return mcp.NewToolResultError(
 						fmt.Sprintf("jobs[%d]: %v", i, err),

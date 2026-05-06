@@ -100,7 +100,10 @@ func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.Di
 				model, _ = g.registry.Resolve(altAlias)
 				maxConcurrent = g.cfg.MaxConcurrent[alias]
 				maxQueue = g.cfg.MaxQueue[alias]
-				running, _ = g.store.CountRunning(ctx, model)
+				running, err = g.store.CountRunning(ctx, model)
+				if err != nil {
+					g.logger.Warn("rebalance: count running", "model", model, "error", err)
+				}
 
 				// Update provider for the new alias.
 				if p, ok := g.providers.ForAlias(altAlias); ok {

@@ -144,8 +144,7 @@ func isDeniedByDepth(absCwd string) (bool, string) {
 // (directory or file — git worktrees use a .git file).
 func hasProjectMarker(dir string) bool {
 	const maxDepth = 6
-	for i := range maxDepth {
-		_ = i
+	for range maxDepth {
 		gitPath := filepath.Join(dir, ".git")
 		if _, err := os.Stat(gitPath); err == nil {
 			return true
