@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"math"
+	"time"
+)
 
 // Request statuses — single source of truth for all status string values.
 // Use these constants everywhere instead of bare string literals.
@@ -183,6 +186,19 @@ var Now func() float64 = NowUnix
 
 // NowUnix returns the current time as a float64 Unix timestamp.
 // This is the default implementation behind domain.Now.
+// Precision: second-level (Unix() truncates to seconds). Sub-second
+// precision is not needed for gateway timing; this is documented intent.
 func NowUnix() float64 {
 	return float64(time.Now().Unix())
+}
+
+// ExecDuration returns the execution duration (finishedAt - startedAt) rounded
+// to 1 decimal place, or nil if either timestamp is missing.
+// Centralizes the repeated duration calculation in Jobs, Errors, and Stats.
+func ExecDuration(startedAt, finishedAt *float64) *float64 {
+	if startedAt == nil || finishedAt == nil {
+		return nil
+	}
+	v := math.Round((*finishedAt-*startedAt)*10) / 10
+	return &v
 }

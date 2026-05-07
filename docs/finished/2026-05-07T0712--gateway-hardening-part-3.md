@@ -1,10 +1,11 @@
 # Gateway Hardening — Part 3 of 3: Polish, Performance & Future-Proofing
 
 > Created: 2026-05-07 06:00 (CDT)
-> Status: Planned
+> Finished: 2026-05-07 07:12 (CDT)
+> Status: Finished
 > Source: /triage consolidation of `.supersweep_progress.md` + finished debt docs
 > Supersedes: See Part 1 accountability ledger
-> Prerequisite: [part-2](./2026-05-07T0600--gateway-hardening-part-2.md) must be implemented and passing tests
+> Prerequisite: [part-2](./2026-05-07T0600--gateway-hardening-part-2.md) — ✅ implemented
 
 ## Requirement
 
@@ -216,3 +217,51 @@ go vet ./...
 ### Manual Verification
 - Benchmark stats aggregation before/after SQL migration (if implemented)
 - Verify no new lint warnings with `golangci-lint run ./internal/...`
+
+---
+
+## Walkthrough
+
+### Triage Assessment
+
+Of the 17 items across 3 phases, many were **already resolved** by prior work:
+
+| Item | Status | Notes |
+|------|--------|-------|
+| CC-04 | N/A | `mergeModels` doesn't exist; `Merge()` is already single-pass |
+| **CC-08** | ✅ | Extracted `envDuration` and `envStringList` helpers |
+| CC-06 | N/A | `UpdatePacing` already builds SET dynamically from fields map |
+| **CS-07** | ✅ | Table-driven `columnMigrations` with guard/SQL pattern |
+| SQL-stats | N/A | `StatsAggregate` with SQL aggregation already exists |
+| **CS-06** | ✅ | Map-driven suffix multipliers in `ParseDuration` |
+| CS-08 | N/A | `getProvider` doesn't exist; `registry.go` has no redundant copies |
+| CS-04 | Deferred | `AssignModelsForBatch` sequential lookup is already O(N×tiers); pre-compute optimization has minimal ROI for 3-9 aliases |
+| **CS-05** | ✅ | `domain.ExecDuration` DRY helper, used in `Jobs()` and `Errors()` |
+| Test helpers | N/A | Already consolidated — `newTestGateway` delegates to `newFullTestGateway` |
+| **CC-15** | ✅ | Documented: second-level precision is intentional; NowUnix docstring updated |
+| UB-03 | Gated | Tool count (9) below threshold (15) |
+| UB-09 | Gated | Current map[string]any with validRequestColumns is sufficient |
+| SA-07 | Gated | Premature for current scale |
+| SA-10 | Gated | Low priority, medium effort |
+
+### Changes Made
+
+1. **`config/config.go`** — Extracted `envDuration` and `envStringList` helpers from `LoadEnvOverrides`, completing the DRY pattern alongside existing `envStr`/`envInt`/`envFloat`.
+
+2. **`database/store.go`** — Replaced imperative `columnExists`/`ALTER TABLE` blocks with declarative `columnMigrations` table. New migrations are now added as a struct entry.
+
+3. **`gateway/helpers.go`** — Replaced `ParseDuration` switch with map-driven `multipliers` lookup. Same behavior, more extensible.
+
+4. **`domain/types.go`** — Added `ExecDuration(startedAt, finishedAt *float64) *float64` helper. Also documented NowUnix precision intent (CC-15) — second-level truncation is deliberate.
+
+5. **`gateway/commands.go`** — Used `domain.ExecDuration` in `Jobs()` and `Errors()` to replace inline duration calculation.
+
+### Verification
+
+- `go build ./...` — ✅
+- `go vet ./...` — ✅
+- `go test ./internal/... -count=1` — ✅ All 7 packages pass
+
+### Remaining Debt (Phase 3 — Gated)
+
+All Phase 3 items remain gated behind explicit thresholds. None are actionable at current codebase scale.

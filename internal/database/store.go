@@ -96,41 +96,55 @@ func (s *Store) applySchema() error {
 	return err
 }
 
-func (s *Store) runMigrations() error {
-	// Migration: add prompt_text column if missing
-	if !s.columnExists("requests", "prompt_text") {
-		if _, err := s.db.Exec("ALTER TABLE requests ADD COLUMN prompt_text TEXT"); err != nil {
-			return fmt.Errorf("add prompt_text: %w", err)
-		}
-	}
+// columnMigration defines a single ALTER TABLE ADD COLUMN migration.
+// The guard column is checked via columnExists before executing the SQL list.
+type columnMigration struct {
+	table     string
+	guard     string   // column to check — if it exists, skip this migration
+	addSQL    []string // one or more ALTER TABLE statements
+}
 
-	// Migration: add token stats columns if missing
-	if !s.columnExists("requests", "tokens_in") {
-		for _, col := range []string{
-			"tokens_in INTEGER", "tokens_out INTEGER", "tokens_cached INTEGER",
-			"tokens_thoughts INTEGER", "tool_calls INTEGER", "api_latency_ms INTEGER",
-		} {
-			if _, err := s.db.Exec("ALTER TABLE requests ADD COLUMN " + col); err != nil {
-				return fmt.Errorf("add %s: %w", col, err)
+// columnMigrations is the ordered list of schema migrations.
+// Add new column migrations here; the runner applies them idempotently.
+var columnMigrations = []columnMigration{
+	{
+		table: "requests", guard: "prompt_text",
+		addSQL: []string{"ALTER TABLE requests ADD COLUMN prompt_text TEXT"},
+	},
+	{
+		table: "requests", guard: "tokens_in",
+		addSQL: []string{
+			"ALTER TABLE requests ADD COLUMN tokens_in INTEGER",
+			"ALTER TABLE requests ADD COLUMN tokens_out INTEGER",
+			"ALTER TABLE requests ADD COLUMN tokens_cached INTEGER",
+			"ALTER TABLE requests ADD COLUMN tokens_thoughts INTEGER",
+			"ALTER TABLE requests ADD COLUMN tool_calls INTEGER",
+			"ALTER TABLE requests ADD COLUMN api_latency_ms INTEGER",
+		},
+	},
+	{
+		table: "requests", guard: "batch_id",
+		addSQL: []string{"ALTER TABLE requests ADD COLUMN batch_id TEXT"},
+	},
+	{
+		table: "requests", guard: "response_text",
+		addSQL: []string{"ALTER TABLE requests ADD COLUMN response_text TEXT"},
+	},
+}
+
+func (s *Store) runMigrations() error {
+	for _, m := range columnMigrations {
+		if s.columnExists(m.table, m.guard) {
+			continue
+		}
+		for _, sql := range m.addSQL {
+			if _, err := s.db.Exec(sql); err != nil {
+				return fmt.Errorf("migration %s.%s: %w", m.table, m.guard, err)
 			}
 		}
 	}
 
-	// Migration: add batch_id column if missing
-	if !s.columnExists("requests", "batch_id") {
-		if _, err := s.db.Exec("ALTER TABLE requests ADD COLUMN batch_id TEXT"); err != nil {
-			return fmt.Errorf("add batch_id: %w", err)
-		}
-	}
-
-	// Migration: add response_text column if missing
-	if !s.columnExists("requests", "response_text") {
-		if _, err := s.db.Exec("ALTER TABLE requests ADD COLUMN response_text TEXT"); err != nil {
-			return fmt.Errorf("add response_text: %w", err)
-		}
-	}
-
-	// Migration: rebuild idx_requests_active to include 'queued' status.
+	// Index migration: rebuild idx_requests_active to include 'queued' status.
 	// SQLite's CREATE INDEX IF NOT EXISTS won't update an existing index,
 	// so we drop and re-create unconditionally (idempotent after first run).
 	if _, err := s.db.Exec("DROP INDEX IF EXISTS idx_requests_active"); err != nil {

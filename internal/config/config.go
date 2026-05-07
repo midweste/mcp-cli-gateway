@@ -109,19 +109,8 @@ func (c *Config) LoadEnvOverrides() {
 	envFloat("GATEWAY_SLOWDOWN_FACTOR", &c.SlowdownFactor)
 	envFloat("GATEWAY_STREAK_SPEEDUP", &c.StreakSpeedup)
 
-	if v := os.Getenv("GATEWAY_QUEUE_POLL_SECONDS"); v != "" {
-		if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
-			c.QueuePollInterval = time.Duration(secs) * time.Second
-		}
-	}
-
-	if v := os.Getenv("GATEWAY_PROVIDER_ORDER"); v != "" {
-		parts := strings.Split(v, ",")
-		for i := range parts {
-			parts[i] = strings.TrimSpace(parts[i])
-		}
-		c.ProviderOrder = parts
-	}
+	envDuration("GATEWAY_QUEUE_POLL_SECONDS", &c.QueuePollInterval)
+	envStringList("GATEWAY_PROVIDER_ORDER", &c.ProviderOrder)
 }
 
 // ── ALL_CAPS accessors — signal that the value may come from an env var ──
@@ -188,5 +177,23 @@ func envFloat(key string, dst *float64) {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			*dst = f
 		}
+	}
+}
+
+func envDuration(key string, dst *time.Duration) {
+	if v := os.Getenv(key); v != "" {
+		if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+			*dst = time.Duration(secs) * time.Second
+		}
+	}
+}
+
+func envStringList(key string, dst *[]string) {
+	if v := os.Getenv(key); v != "" {
+		parts := strings.Split(v, ",")
+		for i := range parts {
+			parts[i] = strings.TrimSpace(parts[i])
+		}
+		*dst = parts
 	}
 }

@@ -40,20 +40,22 @@ func ParseDuration(s string) time.Duration {
 		return 0
 	}
 
-	switch suffix {
-	case 'h':
-		return time.Duration(v * float64(time.Hour))
-	case 'd':
-		return time.Duration(v * 24 * float64(time.Hour))
-	case 'm':
-		return time.Duration(v * float64(time.Minute))
-	default:
-		// Default to hours
-		if vFull, err := parseFloat(s); err == nil {
-			return time.Duration(vFull * float64(time.Hour))
-		}
-		return 0
+	// Suffix → multiplier map (declarative, easy to extend).
+	multipliers := map[byte]float64{
+		'h': float64(time.Hour),
+		'd': 24 * float64(time.Hour),
+		'm': float64(time.Minute),
 	}
+
+	if mult, ok := multipliers[suffix]; ok {
+		return time.Duration(v * mult)
+	}
+
+	// Unknown suffix — try the full string as hours.
+	if vFull, err := parseFloat(s); err == nil {
+		return time.Duration(vFull * float64(time.Hour))
+	}
+	return 0
 }
 
 func parseFloat(s string) (float64, error) {

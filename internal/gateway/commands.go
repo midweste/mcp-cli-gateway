@@ -78,8 +78,8 @@ func (g *Gateway) Jobs(ctx context.Context) ([]domain.JobStatus, error) {
 	for _, r := range requests {
 		var runningTime *float64
 		if r.Status == domain.StatusRunning && r.StartedAt != nil {
-			t := math.Round((now-*r.StartedAt)*10) / 10
-			runningTime = &t
+			nowVal := now
+			runningTime = domain.ExecDuration(r.StartedAt, &nowVal)
 		}
 
 		jobs = append(jobs, domain.JobStatus{
@@ -254,11 +254,7 @@ func (g *Gateway) Errors(ctx context.Context, last string) (*domain.ErrorsResult
 
 	errors := make([]domain.ErrorInfo, 0, len(rows))
 	for _, r := range rows {
-		var execS *float64
-		if r.StartedAt != nil && r.FinishedAt != nil {
-			v := math.Round((*r.FinishedAt-*r.StartedAt)*10) / 10
-			execS = &v
-		}
+		execS := domain.ExecDuration(r.StartedAt, r.FinishedAt)
 
 		finished := ""
 		if r.FinishedAt != nil {
