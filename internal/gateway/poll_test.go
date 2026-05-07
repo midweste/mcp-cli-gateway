@@ -91,7 +91,7 @@ func TestPollForSlot_WaitsForSlot(t *testing.T) {
 	// Fill the slot
 	ctx := context.Background()
 	req := &domain.Request{
-		Model: model, Status: "running", PromptHash: "hash",
+		Model: model, Status: domain.StatusRunning, PromptHash: "hash",
 		PID: 0, Cwd: "/tmp", CreatedAt: float64(time.Now().Unix()),
 	}
 	id, _ := store.InsertRequest(ctx, req)
@@ -107,7 +107,7 @@ func TestPollForSlot_WaitsForSlot(t *testing.T) {
 
 	// Free the slot after a brief delay
 	time.Sleep(100 * time.Millisecond)
-	store.UpdateStatus(ctx, id, "done", map[string]any{
+	store.UpdateStatus(ctx, id, domain.StatusDone, map[string]any{
 		"finished_at": domain.NowUnix(),
 	})
 

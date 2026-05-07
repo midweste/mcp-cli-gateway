@@ -216,7 +216,7 @@ func TestDispatch_QueueFull(t *testing.T) {
 	maxQueue := gw.cfg.MaxQueue["gemini-fast"]
 	for range maxQueue {
 		req := &domain.Request{
-			Model: model, Status: "waiting", PromptHash: "hash",
+			Model: model, Status: domain.StatusWaiting, PromptHash: "hash",
 			PID: 0, Cwd: "/tmp", CreatedAt: float64(time.Now().Unix()),
 		}
 		store.InsertRequest(ctx, req)
@@ -534,7 +534,7 @@ func TestParseDuration_EdgeCases(t *testing.T) {
 		{"3", 3 * time.Hour},       // bare number → hours
 		{"abc", 0},                  // invalid
 		{"x", 0},                    // single char non-numeric
-		{"1x", time.Hour},          // unknown suffix → try full as hours
+		{"1x", 0},                  // unknown suffix, not a valid number
 	}
 
 	for _, tt := range tests {
@@ -555,9 +555,9 @@ func TestJobs_WithWaitingAndRetrying(t *testing.T) {
 	model, _ := gw.registry.Resolve("gemini-fast")
 	ctx := context.Background()
 
-	insertTestReq(t, store, model, "running")
-	insertTestReq(t, store, model, "waiting")
-	insertTestReq(t, store, model, "retrying")
+	insertTestReq(t, store, model, domain.StatusRunning)
+	insertTestReq(t, store, model, domain.StatusWaiting)
+	insertTestReq(t, store, model, domain.StatusRetrying)
 
 	jobs, err := gw.Jobs(ctx)
 	if err != nil {
@@ -572,8 +572,8 @@ func TestJobs_WithWaitingAndRetrying(t *testing.T) {
 	for _, j := range jobs {
 		statuses[j.Status]++
 	}
-	if statuses["running"] != 1 {
-		t.Errorf("running jobs=%d, want 1", statuses["running"])
+	if statuses[domain.StatusRunning] != 1 {
+		t.Errorf("running jobs=%d, want 1", statuses[domain.StatusRunning])
 	}
 }
 
@@ -588,7 +588,7 @@ func TestFindBucketAlternative_AllBusy(t *testing.T) {
 	bucket := FindBucketForModel(gw.cfg, "gemini-deep")
 	for _, alias := range bucket {
 		model, _ := gw.registry.Resolve(alias)
-		insertTestReq(t, store, model, "running")
+		insertTestReq(t, store, model, domain.StatusRunning)
 	}
 
 	// Now all bucket models are busy — findBucketAlternative should return ""

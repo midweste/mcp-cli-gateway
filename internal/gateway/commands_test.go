@@ -79,7 +79,7 @@ func TestStatus(t *testing.T) {
 			name: "Running",
 			setup: func(t *testing.T, gw *Gateway, store *database.Store) {
 				model, _ := gw.registry.Resolve("gemini-fast")
-				insertTestReq(t, store, model, "running")
+				insertTestReq(t, store, model, domain.StatusRunning)
 			},
 			check: func(t *testing.T, status map[string]domain.ModelStatus) {
 				fast := status["gemini-fast"]
@@ -112,9 +112,9 @@ func TestJobs(t *testing.T) {
 	model, _ := gw.registry.Resolve("gemini-fast")
 
 	// Insert active and done
-	insertTestReq(t, store, model, "running")
+	insertTestReq(t, store, model, domain.StatusRunning)
 	now := float64(time.Now().Unix())
-	insertTestReqWithOpts(t, store, model, "done", "done-job", "", &now)
+	insertTestReqWithOpts(t, store, model, domain.StatusDone, "done-job", "", &now)
 
 	jobs, err := gw.Jobs(context.Background())
 	if err != nil {
@@ -138,7 +138,7 @@ func TestCancel(t *testing.T) {
 			name: "ByID",
 			setup: func(t *testing.T, gw *Gateway, store *database.Store) string {
 				model, _ := gw.registry.Resolve("gemini-fast")
-				id := insertTestReq(t, store, model, "waiting")
+				id := insertTestReq(t, store, model, domain.StatusWaiting)
 				return fmt.Sprintf("%d", id)
 			},
 			cancel:  func(gw *Gateway, param string) (*domain.CancelResult, error) {
@@ -150,8 +150,8 @@ func TestCancel(t *testing.T) {
 			name: "ByBatchID",
 			setup: func(t *testing.T, gw *Gateway, store *database.Store) string {
 				model, _ := gw.registry.Resolve("gemini-fast")
-				insertTestReqWithOpts(t, store, model, "waiting", "a", "batch-99", nil)
-				insertTestReqWithOpts(t, store, model, "running", "b", "batch-99", nil)
+				insertTestReqWithOpts(t, store, model, domain.StatusWaiting, "a", "batch-99", nil)
+				insertTestReqWithOpts(t, store, model, domain.StatusRunning, "b", "batch-99", nil)
 				return "batch-99"
 			},
 			cancel:  func(gw *Gateway, param string) (*domain.CancelResult, error) {
@@ -163,8 +163,8 @@ func TestCancel(t *testing.T) {
 			name: "ByModel",
 			setup: func(t *testing.T, gw *Gateway, store *database.Store) string {
 				model, _ := gw.registry.Resolve("gemini-deep")
-				insertTestReq(t, store, model, "waiting")
-				insertTestReq(t, store, model, "retrying")
+				insertTestReq(t, store, model, domain.StatusWaiting)
+				insertTestReq(t, store, model, domain.StatusRetrying)
 				return "gemini-deep"
 			},
 			cancel:  func(gw *Gateway, param string) (*domain.CancelResult, error) {
@@ -216,17 +216,17 @@ func TestStats(t *testing.T) {
 
 				// Insert 3 done jobs with timing data
 				for i := range 3 {
-					id := insertTestReq(t, store, model, "done")
+					id := insertTestReq(t, store, model, domain.StatusDone)
 					startedAt := now - float64(10+i)
-					store.UpdateStatus(ctx, id, "done", map[string]any{
+					store.UpdateStatus(ctx, id, domain.StatusDone, map[string]any{
 						"started_at":  startedAt,
 						"finished_at": now - float64(i),
 						"exit_code":   0,
 					})
 				}
 				// Insert 1 failed job
-				failID := insertTestReq(t, store, model, "failed")
-				store.UpdateStatus(ctx, failID, "failed", map[string]any{
+				failID := insertTestReq(t, store, model, domain.StatusFailed)
+				store.UpdateStatus(ctx, failID, domain.StatusFailed, map[string]any{
 					"started_at":  now - 5.0,
 					"finished_at": now,
 					"exit_code":   1,
@@ -275,8 +275,8 @@ func TestErrors(t *testing.T) {
 
 	ctx := context.Background()
 	now := float64(time.Now().Unix())
-	id := insertTestReq(t, store, model, "failed")
-	store.UpdateStatus(ctx, id, "failed", map[string]any{
+	id := insertTestReq(t, store, model, domain.StatusFailed)
+	store.UpdateStatus(ctx, id, domain.StatusFailed, map[string]any{
 		"finished_at": now, "error": "test failure", "exit_code": 1,
 		"started_at": now - 5.0,
 	})
@@ -296,8 +296,8 @@ func TestErrors_WithTimeWindow(t *testing.T) {
 
 	ctx := context.Background()
 	now := float64(time.Now().Unix())
-	id := insertTestReq(t, store, model, "failed")
-	store.UpdateStatus(ctx, id, "failed", map[string]any{
+	id := insertTestReq(t, store, model, domain.StatusFailed)
+	store.UpdateStatus(ctx, id, domain.StatusFailed, map[string]any{
 		"finished_at": now, "error": "recent fail", "exit_code": 1,
 	})
 
@@ -373,7 +373,7 @@ func TestRetry_NoPrompt(t *testing.T) {
 	model, _ := gw.registry.Resolve("gemini-fast")
 
 	// Insert failed request without prompt_text
-	id := insertTestReq(t, store, model, "failed")
+	id := insertTestReq(t, store, model, domain.StatusFailed)
 
 	_, err := gw.Retry(context.Background(), id)
 	if err == nil {
@@ -411,7 +411,7 @@ func TestRetry_Success(t *testing.T) {
 	fastModel, _ := registry.Resolve("gemini-fast")
 	ctx := context.Background()
 	req := &domain.Request{
-		Model: fastModel, Status: "failed", PromptHash: "hash",
+		Model: fastModel, Status: domain.StatusFailed, PromptHash: "hash",
 		PID: 0, Cwd: "/tmp", CreatedAt: float64(time.Now().Unix()),
 		PromptText: "retry this prompt", Label: "orig",
 	}
@@ -433,7 +433,7 @@ func TestResult(t *testing.T) {
 
 	// Insert a request
 	req := &domain.Request{
-		Model: "gemini-2.5-flash", Status: "done", PromptHash: "hash",
+		Model: "gemini-2.5-flash", Status: domain.StatusDone, PromptHash: "hash",
 		PID: 0, Cwd: "/tmp", CreatedAt: float64(time.Now().Unix()),
 		ResponseText: "hello world",
 	}

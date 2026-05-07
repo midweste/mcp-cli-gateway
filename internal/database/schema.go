@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS requests (
 
 CREATE INDEX IF NOT EXISTS idx_requests_active
     ON requests(model, status)
-    WHERE status IN ('waiting', 'running', 'retrying');
+    WHERE status IN ('waiting', 'running', 'retrying', 'queued');
 
 CREATE TABLE IF NOT EXISTS pacing (
     model TEXT PRIMARY KEY,

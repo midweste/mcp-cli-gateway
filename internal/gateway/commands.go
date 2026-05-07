@@ -13,6 +13,9 @@ import (
 const (
 	// maxErrorLen caps error messages stored in the database.
 	maxErrorLen = 500
+
+	// defaultFailedLimit is the maximum number of recent failures returned by ListErrors.
+	defaultFailedLimit = 20
 )
 
 // Status returns queue status per model with health indicator.
@@ -27,9 +30,9 @@ func (g *Gateway) Status(ctx context.Context) (map[string]domain.ModelStatus, er
 		if err != nil {
 			g.logger.Warn("status: counts", "model", model, "error", err)
 		}
-		running := counts["running"]
-		totalQueued := counts["waiting"] + counts["queued"]
-		retrying := counts["retrying"]
+		running := counts[domain.StatusRunning]
+		totalQueued := counts[domain.StatusWaiting] + counts[domain.StatusQueued]
+		retrying := counts[domain.StatusRetrying]
 		totalPending := running + totalQueued + retrying
 
 		pacingState, _ := g.store.GetPacing(ctx, model)
@@ -71,7 +74,7 @@ func (g *Gateway) Jobs(ctx context.Context) ([]domain.JobStatus, error) {
 	jobs := make([]domain.JobStatus, 0, len(requests))
 	for _, r := range requests {
 		var runningTime *float64
-		if r.Status == "running" && r.StartedAt != nil {
+		if r.Status == domain.StatusRunning && r.StartedAt != nil {
 			t := math.Round((now-*r.StartedAt)*10) / 10
 			runningTime = &t
 		}
@@ -237,7 +240,7 @@ func (g *Gateway) Errors(ctx context.Context, last string) (*domain.ErrorsResult
 		since = time.Now().Add(-window)
 	}
 
-	rows, err := g.store.ListFailed(ctx, since, 20)
+	rows, err := g.store.ListFailed(ctx, since, defaultFailedLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +306,7 @@ func (g *Gateway) Cancel(ctx context.Context, jobID string, modelAlias string, b
 
 	cancelled := make([]int64, 0)
 	for _, r := range requests {
-		_ = g.store.UpdateStatus(ctx, r.ID, "cancelled", map[string]any{
+		_ = g.store.UpdateStatus(ctx, r.ID, domain.StatusCancelled, map[string]any{
 			"error":       "cancelled by user",
 			"finished_at": domain.NowUnix(),
 			"exit_code":   -9,

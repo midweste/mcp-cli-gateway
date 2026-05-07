@@ -116,7 +116,7 @@ func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.Di
 			if running >= maxConcurrent {
 				// Still busy — enqueue and poll-wait
 				dbReq := &domain.Request{
-					Model: model, Status: "queued", Label: req.Label,
+					Model: model, Status: domain.StatusQueued, Label: req.Label,
 					PromptHash: phash, PromptText: req.Prompt,
 					Cwd: req.Cwd,
 					CreatedAt: domain.NowUnix(), BatchID: req.BatchID,
@@ -125,7 +125,7 @@ func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.Di
 				if err != nil {
 					return nil, fmt.Errorf("insert queued request: %w", err)
 				}
-				g.logger.Info("queued", "alias", alias, "running", running, "max", maxConcurrent)
+				g.logger.Info(domain.StatusQueued, "alias", alias, "running", running, "max", maxConcurrent)
 
 				if err := g.pollForSlot(ctx, model, maxConcurrent); err != nil {
 					return nil, err
@@ -160,7 +160,7 @@ func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.Di
 		// Insert or update request row
 		if requestID == 0 {
 			dbReq := &domain.Request{
-				Model: model, Status: "waiting", Label: req.Label,
+				Model: model, Status: domain.StatusWaiting, Label: req.Label,
 				PromptHash: phash, PromptText: req.Prompt,
 				Cwd: req.Cwd,
 				CreatedAt: domain.NowUnix(), BatchID: req.BatchID,
@@ -170,7 +170,7 @@ func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.Di
 				return nil, fmt.Errorf("insert request: %w", err)
 			}
 		} else {
-			_ = g.store.UpdateStatus(ctx, requestID, "waiting", map[string]any{
+			_ = g.store.UpdateStatus(ctx, requestID, domain.StatusWaiting, map[string]any{
 				"retry_count": attempt,
 			})
 		}
@@ -185,7 +185,7 @@ func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.Di
 		}
 
 		// ── Mark as running ──
-		_ = g.store.UpdateStatus(ctx, requestID, "running", map[string]any{
+		_ = g.store.UpdateStatus(ctx, requestID, domain.StatusRunning, map[string]any{
 			"started_at": domain.NowUnix(),
 		})
 
@@ -199,7 +199,7 @@ func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.Di
 
 		if execErr != nil {
 			// Timeout or execution error
-			_ = g.store.UpdateStatus(ctx, requestID, "failed", map[string]any{
+			_ = g.store.UpdateStatus(ctx, requestID, domain.StatusFailed, map[string]any{
 				"error":       fmt.Sprintf("execution error: %v", execErr),
 				"finished_at": domain.NowUnix(),
 				"exit_code":   -1,
@@ -212,7 +212,7 @@ func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.Di
 			_ = g.pacer.OnRateLimit(ctx, model)
 
 			if attempt < g.cfg.MAX_RETRIES() {
-				_ = g.store.UpdateStatus(ctx, requestID, "retrying", nil)
+				_ = g.store.UpdateStatus(ctx, requestID, domain.StatusRetrying, nil)
 				logFields := []any{
 					"model", alias,
 					"provider", prov.Name(),
@@ -229,7 +229,7 @@ func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.Di
 				continue
 			}
 
-			_ = g.store.UpdateStatus(ctx, requestID, "failed", map[string]any{
+			_ = g.store.UpdateStatus(ctx, requestID, domain.StatusFailed, map[string]any{
 				"error":         "rate limit exhausted",
 				"finished_at":   domain.NowUnix(),
 				"exit_code":     exitCode,
@@ -255,11 +255,11 @@ func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.Di
 			for k, v := range tokenStats {
 				fields[k] = v
 			}
-			_ = g.store.UpdateStatus(ctx, requestID, "done", fields)
+			_ = g.store.UpdateStatus(ctx, requestID, domain.StatusDone, fields)
 
 			if responseText == "" && attempt < g.cfg.MAX_RETRIES() {
 				// Empty response — auto-retry
-				_ = g.store.UpdateStatus(ctx, requestID, "retrying", map[string]any{
+				_ = g.store.UpdateStatus(ctx, requestID, domain.StatusRetrying, map[string]any{
 					"retry_count": attempt + 1,
 					"error":       "empty response, auto-retrying",
 				})
@@ -275,7 +275,7 @@ func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.Di
 		// ── Sandbox conflict (exit -2) → retry ──
 		if exitCode == -2 && attempt < g.cfg.MAX_RETRIES() {
 			backoffS := sandboxBackoffS[min(attempt, len(sandboxBackoffS)-1)]
-			_ = g.store.UpdateStatus(ctx, requestID, "retrying", map[string]any{
+			_ = g.store.UpdateStatus(ctx, requestID, domain.StatusRetrying, map[string]any{
 				"error": fmt.Sprintf("sandbox conflict, retry after %ds", backoffS),
 			})
 			g.logger.Info("sandbox conflict, retrying", "backoff_s", backoffS)
@@ -292,7 +292,7 @@ func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.Di
 		if len(errMsg) > maxErrorLen {
 			errMsg = errMsg[:maxErrorLen]
 		}
-		_ = g.store.UpdateStatus(ctx, requestID, "failed", map[string]any{
+		_ = g.store.UpdateStatus(ctx, requestID, domain.StatusFailed, map[string]any{
 			"finished_at":   domain.NowUnix(),
 			"exit_code":     exitCode,
 			"error":         errMsg,
@@ -341,10 +341,7 @@ func (g *Gateway) resolveTier(ctx context.Context, tier string) string {
 	}
 
 	if len(candidates) == 0 {
-		if len(aliases) > 0 {
-			return aliases[0] // fallback
-		}
-		return ""
+		return "" // all providers unavailable — caller handles the error
 	}
 
 	// Find the minimum load.
@@ -366,7 +363,6 @@ func (g *Gateway) resolveTier(ctx context.Context, tier string) string {
 	// Pick one at random among equally-loaded.
 	return best[rand.Intn(len(best))]
 }
-
 
 func (g *Gateway) pollForSlot(ctx context.Context, model string, maxConcurrent int) error {
 	for {

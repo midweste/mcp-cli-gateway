@@ -83,7 +83,7 @@ func TestCleanStalePIDs(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	insertReq(t, s, "test-model", "running", 999999, float64(time.Now().Unix()))
+	insertReq(t, s, "test-model", domain.StatusRunning, 999999, float64(time.Now().Unix()))
 
 	if err := s.CleanStalePIDs(ctx); err != nil {
 		t.Fatalf("CleanStalePIDs: %v", err)
@@ -94,7 +94,7 @@ func TestCleanStalePIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query: %v", err)
 	}
-	if status != "failed" {
+	if status != domain.StatusFailed {
 		t.Errorf("status=%q, want 'failed'", status)
 	}
 }
@@ -104,8 +104,8 @@ func TestCleanupOldRequests(t *testing.T) {
 	ctx := context.Background()
 
 	oldTime := float64(time.Now().Unix()) - float64(s.cfg.CleanupDays+1)*86400
-	id := insertReq(t, s, "test-model", "done", os.Getpid(), oldTime)
-	s.UpdateStatus(ctx, id, "done", map[string]any{"finished_at": oldTime})
+	id := insertReq(t, s, "test-model", domain.StatusDone, os.Getpid(), oldTime)
+	s.UpdateStatus(ctx, id, domain.StatusDone, map[string]any{"finished_at": oldTime})
 
 	if err := s.CleanupOldRequests(ctx); err != nil {
 		t.Fatalf("CleanupOldRequests: %v", err)
@@ -123,8 +123,8 @@ func TestCleanupPreservesRecent(t *testing.T) {
 	ctx := context.Background()
 
 	now := float64(time.Now().Unix())
-	id := insertReq(t, s, "test-model", "done", os.Getpid(), now)
-	s.UpdateStatus(ctx, id, "done", map[string]any{"finished_at": now})
+	id := insertReq(t, s, "test-model", domain.StatusDone, os.Getpid(), now)
+	s.UpdateStatus(ctx, id, domain.StatusDone, map[string]any{"finished_at": now})
 
 	if err := s.CleanupOldRequests(ctx); err != nil {
 		t.Fatalf("CleanupOldRequests: %v", err)
@@ -142,7 +142,7 @@ func TestSchemaHasBatchID(t *testing.T) {
 	ctx := context.Background()
 
 	req := &domain.Request{
-		Model: "test", Status: "waiting", PromptHash: "hash",
+		Model: "test", Status: domain.StatusWaiting, PromptHash: "hash",
 		PID: os.Getpid(), Cwd: "/tmp", CreatedAt: float64(time.Now().Unix()),
 		BatchID: "test-batch-123",
 	}
@@ -176,9 +176,9 @@ func TestCountRunning(t *testing.T) {
 		t.Errorf("empty count=%d, want 0", count)
 	}
 
-	insertReq(t, s, model, "running", 0, float64(time.Now().Unix()))
-	insertReq(t, s, model, "running", 0, float64(time.Now().Unix()))
-	insertReq(t, s, model, "waiting", 0, float64(time.Now().Unix()))
+	insertReq(t, s, model, domain.StatusRunning, 0, float64(time.Now().Unix()))
+	insertReq(t, s, model, domain.StatusRunning, 0, float64(time.Now().Unix()))
+	insertReq(t, s, model, domain.StatusWaiting, 0, float64(time.Now().Unix()))
 
 	count, err = s.CountRunning(ctx, model)
 	if err != nil {
@@ -194,11 +194,11 @@ func TestCountPending(t *testing.T) {
 	ctx := context.Background()
 	model := "test-model"
 
-	insertReq(t, s, model, "running", 0, float64(time.Now().Unix()))
-	insertReq(t, s, model, "waiting", 0, float64(time.Now().Unix()))
-	insertReq(t, s, model, "queued", 0, float64(time.Now().Unix()))
-	insertReq(t, s, model, "retrying", 0, float64(time.Now().Unix()))
-	insertReq(t, s, model, "done", 0, float64(time.Now().Unix()))
+	insertReq(t, s, model, domain.StatusRunning, 0, float64(time.Now().Unix()))
+	insertReq(t, s, model, domain.StatusWaiting, 0, float64(time.Now().Unix()))
+	insertReq(t, s, model, domain.StatusQueued, 0, float64(time.Now().Unix()))
+	insertReq(t, s, model, domain.StatusRetrying, 0, float64(time.Now().Unix()))
+	insertReq(t, s, model, domain.StatusDone, 0, float64(time.Now().Unix()))
 
 	count, err := s.CountPending(ctx, model)
 	if err != nil {
@@ -214,11 +214,11 @@ func TestCountByStatus(t *testing.T) {
 	ctx := context.Background()
 	model := "test-model"
 
-	insertReq(t, s, model, "waiting", 0, float64(time.Now().Unix()))
-	insertReq(t, s, model, "waiting", 0, float64(time.Now().Unix()))
-	insertReq(t, s, model, "running", 0, float64(time.Now().Unix()))
+	insertReq(t, s, model, domain.StatusWaiting, 0, float64(time.Now().Unix()))
+	insertReq(t, s, model, domain.StatusWaiting, 0, float64(time.Now().Unix()))
+	insertReq(t, s, model, domain.StatusRunning, 0, float64(time.Now().Unix()))
 
-	count, err := s.CountByStatus(ctx, model, "waiting")
+	count, err := s.CountByStatus(ctx, model, domain.StatusWaiting)
 	if err != nil {
 		t.Fatalf("CountByStatus: %v", err)
 	}
@@ -231,7 +231,7 @@ func TestGetRequest(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	id := insertReqFull(t, s, "test-model", "running", "my-label", "batch-1")
+	id := insertReqFull(t, s, "test-model", domain.StatusRunning, "my-label", "batch-1")
 
 	req, err := s.GetRequest(ctx, id)
 	if err != nil {
@@ -258,10 +258,10 @@ func TestResponseStorage(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	id := insertReqFull(t, s, "test-model", "running", "label", "batch-1")
+	id := insertReqFull(t, s, "test-model", domain.StatusRunning, "label", "batch-1")
 	resp := "This is a test response from Gemini."
 
-	err := s.UpdateStatus(ctx, id, "done", map[string]any{
+	err := s.UpdateStatus(ctx, id, domain.StatusDone, map[string]any{
 		"response_text": resp,
 		"finished_at":   float64(time.Now().Unix()),
 	})
@@ -290,12 +290,12 @@ func TestListActive(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	insertReq(t, s, "m", "running", 0, float64(time.Now().Unix()))
-	insertReq(t, s, "m", "waiting", 0, float64(time.Now().Unix()))
-	insertReq(t, s, "m", "queued", 0, float64(time.Now().Unix()))
-	insertReq(t, s, "m", "retrying", 0, float64(time.Now().Unix()))
-	insertReq(t, s, "m", "done", 0, float64(time.Now().Unix()))
-	insertReq(t, s, "m", "failed", 0, float64(time.Now().Unix()))
+	insertReq(t, s, "m", domain.StatusRunning, 0, float64(time.Now().Unix()))
+	insertReq(t, s, "m", domain.StatusWaiting, 0, float64(time.Now().Unix()))
+	insertReq(t, s, "m", domain.StatusQueued, 0, float64(time.Now().Unix()))
+	insertReq(t, s, "m", domain.StatusRetrying, 0, float64(time.Now().Unix()))
+	insertReq(t, s, "m", domain.StatusDone, 0, float64(time.Now().Unix()))
+	insertReq(t, s, "m", domain.StatusFailed, 0, float64(time.Now().Unix()))
 
 	active, err := s.ListActive(ctx)
 	if err != nil {
@@ -311,15 +311,15 @@ func TestListFailed(t *testing.T) {
 	ctx := context.Background()
 
 	now := float64(time.Now().Unix())
-	id := insertReq(t, s, "m", "failed", 0, now)
-	s.UpdateStatus(ctx, id, "failed", map[string]any{
+	id := insertReq(t, s, "m", domain.StatusFailed, 0, now)
+	s.UpdateStatus(ctx, id, domain.StatusFailed, map[string]any{
 		"finished_at": now, "error": "test error", "exit_code": 1,
 	})
 
 	// Also insert an old failure that should be excluded by time filter
 	oldTime := now - 86400*30
-	oldID := insertReq(t, s, "m", "failed", 0, oldTime)
-	s.UpdateStatus(ctx, oldID, "failed", map[string]any{"finished_at": oldTime})
+	oldID := insertReq(t, s, "m", domain.StatusFailed, 0, oldTime)
+	s.UpdateStatus(ctx, oldID, domain.StatusFailed, map[string]any{"finished_at": oldTime})
 
 	since := time.Now().Add(-24 * time.Hour)
 	failed, err := s.ListFailed(ctx, since, 10)
@@ -336,11 +336,11 @@ func TestListCompleted(t *testing.T) {
 	ctx := context.Background()
 
 	now := float64(time.Now().Unix())
-	id := insertReq(t, s, "m1", "done", 0, now)
-	s.UpdateStatus(ctx, id, "done", map[string]any{"finished_at": now})
+	id := insertReq(t, s, "m1", domain.StatusDone, 0, now)
+	s.UpdateStatus(ctx, id, domain.StatusDone, map[string]any{"finished_at": now})
 
-	id2 := insertReq(t, s, "m2", "done", 0, now)
-	s.UpdateStatus(ctx, id2, "done", map[string]any{"finished_at": now})
+	id2 := insertReq(t, s, "m2", domain.StatusDone, 0, now)
+	s.UpdateStatus(ctx, id2, domain.StatusDone, map[string]any{"finished_at": now})
 
 	completed, err := s.ListCompleted(ctx, "m1", time.Time{})
 	if err != nil {
@@ -355,9 +355,9 @@ func TestListActiveByBatchID(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	insertReqFull(t, s, "m", "waiting", "a", "batch-A")
-	insertReqFull(t, s, "m", "running", "b", "batch-A")
-	insertReqFull(t, s, "m", "waiting", "c", "batch-B")
+	insertReqFull(t, s, "m", domain.StatusWaiting, "a", "batch-A")
+	insertReqFull(t, s, "m", domain.StatusRunning, "b", "batch-A")
+	insertReqFull(t, s, "m", domain.StatusWaiting, "c", "batch-B")
 
 	active, err := s.ListActiveByBatchID(ctx, "batch-A")
 	if err != nil {
@@ -372,9 +372,9 @@ func TestListActiveByModel(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	insertReq(t, s, "m1", "waiting", 0, float64(time.Now().Unix()))
-	insertReq(t, s, "m1", "retrying", 0, float64(time.Now().Unix()))
-	insertReq(t, s, "m2", "running", 0, float64(time.Now().Unix()))
+	insertReq(t, s, "m1", domain.StatusWaiting, 0, float64(time.Now().Unix()))
+	insertReq(t, s, "m1", domain.StatusRetrying, 0, float64(time.Now().Unix()))
+	insertReq(t, s, "m2", domain.StatusRunning, 0, float64(time.Now().Unix()))
 
 	active, err := s.ListActiveByModel(ctx, "m1")
 	if err != nil {
@@ -389,10 +389,10 @@ func TestRunningModels(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	insertReq(t, s, "m1", "running", 0, float64(time.Now().Unix()))
-	insertReq(t, s, "m1", "running", 0, float64(time.Now().Unix()))
-	insertReq(t, s, "m2", "running", 0, float64(time.Now().Unix()))
-	insertReq(t, s, "m3", "waiting", 0, float64(time.Now().Unix()))
+	insertReq(t, s, "m1", domain.StatusRunning, 0, float64(time.Now().Unix()))
+	insertReq(t, s, "m1", domain.StatusRunning, 0, float64(time.Now().Unix()))
+	insertReq(t, s, "m2", domain.StatusRunning, 0, float64(time.Now().Unix()))
+	insertReq(t, s, "m3", domain.StatusWaiting, 0, float64(time.Now().Unix()))
 
 	models, err := s.RunningModels(ctx)
 	if err != nil {
@@ -534,29 +534,29 @@ func TestStatusCounts(t *testing.T) {
 	now := float64(time.Now().Unix())
 
 	// Insert requests with various statuses
-	insertReq(t, s, model, "running", 1, now)
-	insertReq(t, s, model, "running", 2, now)
-	insertReq(t, s, model, "waiting", 3, now)
-	insertReq(t, s, model, "queued", 4, now)
-	insertReq(t, s, model, "retrying", 5, now)
-	insertReq(t, s, model, "done", 6, now) // done should not be counted
+	insertReq(t, s, model, domain.StatusRunning, 1, now)
+	insertReq(t, s, model, domain.StatusRunning, 2, now)
+	insertReq(t, s, model, domain.StatusWaiting, 3, now)
+	insertReq(t, s, model, domain.StatusQueued, 4, now)
+	insertReq(t, s, model, domain.StatusRetrying, 5, now)
+	insertReq(t, s, model, domain.StatusDone, 6, now) // done should not be counted
 
 	counts, err := s.StatusCounts(ctx, model)
 	if err != nil {
 		t.Fatalf("StatusCounts: %v", err)
 	}
 
-	if counts["running"] != 2 {
-		t.Errorf("running=%d, want 2", counts["running"])
+	if counts[domain.StatusRunning] != 2 {
+		t.Errorf("running=%d, want 2", counts[domain.StatusRunning])
 	}
-	if counts["waiting"] != 1 {
-		t.Errorf("waiting=%d, want 1", counts["waiting"])
+	if counts[domain.StatusWaiting] != 1 {
+		t.Errorf("waiting=%d, want 1", counts[domain.StatusWaiting])
 	}
-	if counts["queued"] != 1 {
-		t.Errorf("queued=%d, want 1", counts["queued"])
+	if counts[domain.StatusQueued] != 1 {
+		t.Errorf("queued=%d, want 1", counts[domain.StatusQueued])
 	}
-	if counts["retrying"] != 1 {
-		t.Errorf("retrying=%d, want 1", counts["retrying"])
+	if counts[domain.StatusRetrying] != 1 {
+		t.Errorf("retrying=%d, want 1", counts[domain.StatusRetrying])
 	}
 
 	// Different model should return zeros
@@ -564,8 +564,8 @@ func TestStatusCounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StatusCounts other: %v", err)
 	}
-	if counts2["running"] != 0 {
-		t.Errorf("other running=%d, want 0", counts2["running"])
+	if counts2[domain.StatusRunning] != 0 {
+		t.Errorf("other running=%d, want 0", counts2[domain.StatusRunning])
 	}
 }
 
@@ -589,10 +589,10 @@ func TestStatsAggregate_SingleDoneRequest(t *testing.T) {
 	ctx := context.Background()
 	now := float64(time.Now().Unix())
 
-	id := insertReq(t, s, "gemini-2.5-flash", "running", os.Getpid(), now-100)
+	id := insertReq(t, s, "gemini-2.5-flash", domain.StatusRunning, os.Getpid(), now-100)
 	startedAt := now - 90
 	finishedAt := now - 10
-	err := s.UpdateStatus(ctx, id, "done", map[string]any{
+	err := s.UpdateStatus(ctx, id, domain.StatusDone, map[string]any{
 		"started_at":  startedAt,
 		"finished_at": finishedAt,
 		"exit_code":   0,
@@ -630,14 +630,14 @@ func TestStatsAggregate_MixedStatuses(t *testing.T) {
 	now := float64(time.Now().Unix())
 
 	// 2 done, 1 failed, 1 cancelled
-	for i, status := range []string{"done", "done", "failed", "cancelled"} {
-		id := insertReq(t, s, "gemini-2.5-flash", "running", os.Getpid(), now-float64(100+i*10))
+	for i, status := range []string{domain.StatusDone, domain.StatusDone, domain.StatusFailed, domain.StatusCancelled} {
+		id := insertReq(t, s, "gemini-2.5-flash", domain.StatusRunning, os.Getpid(), now-float64(100+i*10))
 		fields := map[string]any{
 			"started_at":  now - float64(90+i*10),
 			"finished_at": now - float64(i*10),
 			"exit_code":   0,
 		}
-		if status == "failed" {
+		if status == domain.StatusFailed {
 			fields["exit_code"] = 1
 			fields["error"] = "test error"
 			fields["retry_count"] = 2
@@ -676,8 +676,8 @@ func TestStatsAggregate_Timeouts(t *testing.T) {
 	ctx := context.Background()
 	now := float64(time.Now().Unix())
 
-	id := insertReq(t, s, "gemini-2.5-flash", "running", os.Getpid(), now-100)
-	err := s.UpdateStatus(ctx, id, "failed", map[string]any{
+	id := insertReq(t, s, "gemini-2.5-flash", domain.StatusRunning, os.Getpid(), now-100)
+	err := s.UpdateStatus(ctx, id, domain.StatusFailed, map[string]any{
 		"started_at":  now - 90,
 		"finished_at": now - 10,
 		"exit_code":   -1, // timeout signal
@@ -705,14 +705,14 @@ func TestStatsAggregate_TimeWindow(t *testing.T) {
 	now := float64(time.Now().Unix())
 
 	// Old request — outside window
-	id1 := insertReq(t, s, "gemini-2.5-flash", "running", os.Getpid(), now-7200)
-	s.UpdateStatus(ctx, id1, "done", map[string]any{
+	id1 := insertReq(t, s, "gemini-2.5-flash", domain.StatusRunning, os.Getpid(), now-7200)
+	s.UpdateStatus(ctx, id1, domain.StatusDone, map[string]any{
 		"started_at": now - 7100, "finished_at": now - 7000, "exit_code": 0,
 	})
 
 	// Recent request — inside window
-	id2 := insertReq(t, s, "gemini-2.5-flash", "running", os.Getpid(), now-100)
-	s.UpdateStatus(ctx, id2, "done", map[string]any{
+	id2 := insertReq(t, s, "gemini-2.5-flash", domain.StatusRunning, os.Getpid(), now-100)
+	s.UpdateStatus(ctx, id2, domain.StatusDone, map[string]any{
 		"started_at": now - 90, "finished_at": now - 10, "exit_code": 0,
 	})
 
@@ -751,14 +751,14 @@ func TestListTimestamps_ReturnsOnlyWithStartedAt(t *testing.T) {
 	now := float64(time.Now().Unix())
 
 	// Request with started_at and finished_at — should appear
-	id1 := insertReq(t, s, "gemini-2.5-flash", "running", os.Getpid(), now-100)
-	s.UpdateStatus(ctx, id1, "done", map[string]any{
+	id1 := insertReq(t, s, "gemini-2.5-flash", domain.StatusRunning, os.Getpid(), now-100)
+	s.UpdateStatus(ctx, id1, domain.StatusDone, map[string]any{
 		"started_at": now - 90, "finished_at": now - 10, "exit_code": 0,
 	})
 
 	// Request with only finished_at (no started_at) — should be excluded
-	id2 := insertReq(t, s, "gemini-2.5-flash", "running", os.Getpid(), now-100)
-	s.UpdateStatus(ctx, id2, "failed", map[string]any{
+	id2 := insertReq(t, s, "gemini-2.5-flash", domain.StatusRunning, os.Getpid(), now-100)
+	s.UpdateStatus(ctx, id2, domain.StatusFailed, map[string]any{
 		"finished_at": now - 5, "exit_code": 1, "error": "no start",
 	})
 
@@ -782,8 +782,8 @@ func TestListTimestamps_MultiplePairs(t *testing.T) {
 	now := float64(time.Now().Unix())
 
 	for i := 0; i < 5; i++ {
-		id := insertReq(t, s, "gemini-2.5-flash", "running", os.Getpid(), now-float64(100+i*10))
-		s.UpdateStatus(ctx, id, "done", map[string]any{
+		id := insertReq(t, s, "gemini-2.5-flash", domain.StatusRunning, os.Getpid(), now-float64(100+i*10))
+		s.UpdateStatus(ctx, id, domain.StatusDone, map[string]any{
 			"started_at": now - float64(90+i*10), "finished_at": now - float64(i*10), "exit_code": 0,
 		})
 	}
@@ -803,8 +803,8 @@ func TestListTimestamps_DifferentModel(t *testing.T) {
 	now := float64(time.Now().Unix())
 
 	// Insert for model A
-	id := insertReq(t, s, "gemini-2.5-flash", "running", os.Getpid(), now-100)
-	s.UpdateStatus(ctx, id, "done", map[string]any{
+	id := insertReq(t, s, "gemini-2.5-flash", domain.StatusRunning, os.Getpid(), now-100)
+	s.UpdateStatus(ctx, id, domain.StatusDone, map[string]any{
 		"started_at": now - 90, "finished_at": now - 10, "exit_code": 0,
 	})
 

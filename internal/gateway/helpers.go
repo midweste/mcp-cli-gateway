@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,8 +57,7 @@ func ParseDuration(s string) time.Duration {
 }
 
 func parseFloat(s string) (float64, error) {
-	var v float64
-	_, err := fmt.Sscanf(s, "%f", &v)
+	v, err := strconv.ParseFloat(s, 64)
 	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
 		return 0, fmt.Errorf("invalid number: %s", s)
 	}

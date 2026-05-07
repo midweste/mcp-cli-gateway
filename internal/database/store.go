@@ -130,6 +130,18 @@ func (s *Store) runMigrations() error {
 		}
 	}
 
+	// Migration: rebuild idx_requests_active to include 'queued' status.
+	// SQLite's CREATE INDEX IF NOT EXISTS won't update an existing index,
+	// so we drop and re-create unconditionally (idempotent after first run).
+	if _, err := s.db.Exec("DROP INDEX IF EXISTS idx_requests_active"); err != nil {
+		return fmt.Errorf("drop idx_requests_active: %w", err)
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_requests_active
+		ON requests(model, status)
+		WHERE status IN ('waiting', 'running', 'retrying', 'queued')`); err != nil {
+		return fmt.Errorf("create idx_requests_active: %w", err)
+	}
+
 	return nil
 }
 
@@ -155,7 +167,7 @@ const selectColumns = `id, model, status, label, prompt_hash, prompt_text, pid, 
 func (s *Store) CountRunning(ctx context.Context, model string) (int, error) {
 	var count int
 	err := s.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM requests WHERE model=? AND status='running'", model,
+		"SELECT COUNT(*) FROM requests WHERE model=? AND status=?", model, domain.StatusRunning,
 	).Scan(&count)
 	return count, err
 }
@@ -179,9 +191,9 @@ func (s *Store) CountByStatus(ctx context.Context, model, status string) (int, e
 }
 
 // StatusCounts returns counts for all active statuses for a model in a single query.
-// Keys: "running", "waiting", "queued", "retrying".
+// Keys: domain.StatusRunning, domain.StatusWaiting, domain.StatusQueued, domain.StatusRetrying.
 func (s *Store) StatusCounts(ctx context.Context, model string) (map[string]int, error) {
-	counts := map[string]int{"running": 0, "waiting": 0, "queued": 0, "retrying": 0}
+	counts := map[string]int{domain.StatusRunning: 0, domain.StatusWaiting: 0, domain.StatusQueued: 0, domain.StatusRetrying: 0}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT status, COUNT(*) FROM requests
 		 WHERE model=? AND status IN ('running','waiting','queued','retrying')
@@ -342,7 +354,7 @@ func (s *Store) ListActiveByModel(ctx context.Context, model string) ([]domain.R
 // RunningModels returns all model names that have a running request.
 func (s *Store) RunningModels(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT DISTINCT model FROM requests WHERE status='running'",
+		"SELECT DISTINCT model FROM requests WHERE status=?", domain.StatusRunning,
 	)
 	if err != nil {
 		return nil, err
@@ -521,7 +533,7 @@ func (s *Store) CleanStalePIDs(ctx context.Context) error {
 	now := domain.NowUnix()
 	for _, id := range staleIDs {
 		if _, err := s.db.ExecContext(ctx,
-			"UPDATE requests SET status='failed', error='process died (stale PID)', finished_at=? WHERE id=?",
+			fmt.Sprintf("UPDATE requests SET status='%s', error='process died (stale PID)', finished_at=? WHERE id=?", domain.StatusFailed),
 			now, id,
 		); err != nil {
 			s.logger.Warn("failed to mark stale PID", "id", id, "error", err)

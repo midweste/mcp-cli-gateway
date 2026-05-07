@@ -2,6 +2,18 @@ package domain
 
 import "time"
 
+// Request statuses — single source of truth for all status string values.
+// Use these constants everywhere instead of bare string literals.
+const (
+	StatusQueued    = "queued"
+	StatusWaiting   = "waiting"
+	StatusRunning   = "running"
+	StatusRetrying  = "retrying"
+	StatusDone      = "done"
+	StatusFailed    = "failed"
+	StatusCancelled = "cancelled"
+)
+
 // Request represents a gateway job request stored in SQLite.
 type Request struct {
 	ID             int64    `json:"id"`

@@ -83,7 +83,7 @@ func (c *Config) AliasProviderMap(providers []ProviderDescriptor) map[string]str
 	for alias := range c.Models {
 		for _, prov := range providers {
 			prefix := prov.Name() + "-"
-			if len(alias) > len(prefix) && alias[:len(prefix)] == prefix {
+			if strings.HasPrefix(alias, prefix) {
 				m[alias] = prov.Name()
 				break
 			}

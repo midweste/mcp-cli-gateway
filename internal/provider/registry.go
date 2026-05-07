@@ -1,6 +1,6 @@
 package provider
 
-import "fmt"
+// Package provider manages CLI provider discovery and registration.
 
 // Registry maps provider names to Provider instances.
 // Only providers whose CLI is available are registered.
@@ -56,6 +56,6 @@ func (r *Registry) Count() int {
 // MustHaveProviders panics if no providers are available.
 func (r *Registry) MustHaveProviders() {
 	if len(r.providers) == 0 {
-		panic(fmt.Sprintf("no CLI providers available — install at least one of: gemini, codex, claude"))
+		panic("no CLI providers available — install at least one of: gemini, codex, claude")
 	}
 }
