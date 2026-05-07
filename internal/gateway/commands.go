@@ -19,6 +19,9 @@ const (
 )
 
 // Status returns queue status per model with health indicator.
+// Errors within individual model queries are logged but not propagated — partial results
+// are returned on partial failure. Losing one model's status should not fail the entire
+// status response (ForEach partial-result contract).
 func (g *Gateway) Status(ctx context.Context) (map[string]domain.ModelStatus, error) {
 	result := make(map[string]domain.ModelStatus)
 
@@ -93,6 +96,8 @@ func (g *Gateway) Jobs(ctx context.Context) ([]domain.JobStatus, error) {
 }
 
 // Pacing returns adaptive pacing state for all models.
+// Uses ForEach partial-result contract: individual model errors are logged,
+// not propagated. Missing models are omitted from the result map.
 func (g *Gateway) Pacing(ctx context.Context) (map[string]domain.PacingInfo, error) {
 	result := make(map[string]domain.PacingInfo)
 
@@ -118,6 +123,8 @@ func (g *Gateway) Pacing(ctx context.Context) (map[string]domain.PacingInfo, err
 }
 
 // Stats returns historical performance stats per model.
+// Uses ForEach partial-result contract: individual model errors yield zero-stat
+// entries rather than failing the entire response.
 // Uses SQL aggregation for counts/averages and lightweight timestamp queries
 // for p95/peak — avoiding O(n) memory from loading full request rows.
 func (g *Gateway) Stats(ctx context.Context, last string) (*domain.StatsResult, error) {

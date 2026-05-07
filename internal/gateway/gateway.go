@@ -16,15 +16,9 @@ type Executor interface {
 	Run(ctx context.Context, args []string, cwd string, stdin string) (stdout, stderr string, exitCode int, err error)
 }
 
-// Store abstracts database operations used by Gateway.
-// *database.Store satisfies this interface implicitly.
-type Store interface {
-	// Request lifecycle
-	InsertRequest(ctx context.Context, req *domain.Request) (int64, error)
-	UpdateStatus(ctx context.Context, id int64, status string, fields map[string]any) error
+// RequestReader provides read-only access to request data.
+type RequestReader interface {
 	GetRequest(ctx context.Context, id int64) (*domain.Request, error)
-
-	// Counting & listing
 	CountRunning(ctx context.Context, model string) (int, error)
 	CountPending(ctx context.Context, model string) (int, error)
 	StatusCounts(ctx context.Context, model string) (map[string]int, error)
@@ -36,10 +30,28 @@ type Store interface {
 	ListTimestamps(ctx context.Context, model string, since time.Time) ([]domain.TimestampPair, error)
 	ListFailed(ctx context.Context, since time.Time, limit int) ([]domain.Request, error)
 	RunningModels(ctx context.Context) ([]string, error)
+}
 
-	// Pacing
+// RequestWriter provides write access to request lifecycle.
+type RequestWriter interface {
+	InsertRequest(ctx context.Context, req *domain.Request) (int64, error)
+	UpdateStatus(ctx context.Context, id int64, status string, fields map[string]any) error
+}
+
+// PacingStore provides read/write access to pacing state.
+type PacingStore interface {
 	GetPacing(ctx context.Context, model string) (*domain.PacingState, error)
 	UpdatePacing(ctx context.Context, model string, fields map[string]any) error
+}
+
+// Store abstracts all database operations used by Gateway.
+// Composed from RequestReader, RequestWriter, and PacingStore sub-interfaces
+// so consumers can depend on only the slice they need (ISP).
+// *database.Store satisfies this interface implicitly.
+type Store interface {
+	RequestReader
+	RequestWriter
+	PacingStore
 }
 
 // Gateway is the central orchestrator — owns dispatch, batch, and commands.

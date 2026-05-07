@@ -177,8 +177,12 @@ func FormatTimeShort(ts float64) string {
 	return time.Unix(int64(ts), 0).Format("15:04:05")
 }
 
+// Now returns the current time as a float64 Unix timestamp.
+// Override in tests for determinism: domain.Now = func() float64 { return 1234567890.0 }
+var Now func() float64 = NowUnix
+
 // NowUnix returns the current time as a float64 Unix timestamp.
-// Used throughout gateway, database, and test code.
+// This is the default implementation behind domain.Now.
 func NowUnix() float64 {
 	return float64(time.Now().Unix())
 }

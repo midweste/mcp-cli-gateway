@@ -24,8 +24,14 @@ type DispatchRequest struct {
 }
 
 // Dispatch executes the core flow: resolve tier → pick provider → enqueue → pace → run → handle result.
-// Status updates via UpdateStatus/UpdatePacing use _ = (fire-and-forget) because
-// they are best-effort tracking; a status update failure should not abort the dispatch.
+//
+// Error strategy:
+//   - The returned error represents infrastructure failures (DB errors, context cancellation)
+//     that prevent the dispatch from completing. Callers should treat these as retryable.
+//   - DispatchResult.Error represents user-visible operational failures (queue full, timeout,
+//     rate limit exhausted). These are terminal for this attempt but not infrastructure errors.
+//   - Status/pacing updates use bestEffortUpdate (fire-and-forget with warning log) because
+//     a tracking update failure should not abort the dispatch itself.
 func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.DispatchResult, error) {
 	// ── Resolve tier to a concrete provider-prefixed alias ──
 	alias := req.Model
@@ -152,7 +158,7 @@ func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.Di
 			}
 
 			// Reserve the time slot
-			_ = g.store.UpdatePacing(ctx, model, map[string]any{
+			g.bestEffortUpdatePacing(ctx, model, map[string]any{
 				"last_request_at": now + waitTime.Seconds(),
 			})
 		}
@@ -170,7 +176,7 @@ func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.Di
 				return nil, fmt.Errorf("insert request: %w", err)
 			}
 		} else {
-			_ = g.store.UpdateStatus(ctx, requestID, domain.StatusWaiting, map[string]any{
+			g.bestEffortUpdate(ctx, requestID, domain.StatusWaiting, map[string]any{
 				"retry_count": attempt,
 			})
 		}
@@ -185,7 +191,7 @@ func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.Di
 		}
 
 		// ── Mark as running ──
-		_ = g.store.UpdateStatus(ctx, requestID, domain.StatusRunning, map[string]any{
+		g.bestEffortUpdate(ctx, requestID, domain.StatusRunning, map[string]any{
 			"started_at": domain.NowUnix(),
 		})
 
@@ -199,7 +205,7 @@ func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.Di
 
 		if execErr != nil {
 			// Timeout or execution error
-			_ = g.store.UpdateStatus(ctx, requestID, domain.StatusFailed, map[string]any{
+			g.bestEffortUpdate(ctx, requestID, domain.StatusFailed, map[string]any{
 				"error":       fmt.Sprintf("execution error: %v", execErr),
 				"finished_at": domain.NowUnix(),
 				"exit_code":   -1,
@@ -212,7 +218,7 @@ func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.Di
 			_ = g.pacer.OnRateLimit(ctx, model)
 
 			if attempt < g.cfg.MAX_RETRIES() {
-				_ = g.store.UpdateStatus(ctx, requestID, domain.StatusRetrying, nil)
+				g.bestEffortUpdate(ctx, requestID, domain.StatusRetrying, nil)
 				logFields := []any{
 					"model", alias,
 					"provider", prov.Name(),
@@ -229,7 +235,7 @@ func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.Di
 				continue
 			}
 
-			_ = g.store.UpdateStatus(ctx, requestID, domain.StatusFailed, map[string]any{
+			g.bestEffortUpdate(ctx, requestID, domain.StatusFailed, map[string]any{
 				"error":         "rate limit exhausted",
 				"finished_at":   domain.NowUnix(),
 				"exit_code":     exitCode,
@@ -255,11 +261,11 @@ func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.Di
 			for k, v := range tokenStats {
 				fields[k] = v
 			}
-			_ = g.store.UpdateStatus(ctx, requestID, domain.StatusDone, fields)
+			g.bestEffortUpdate(ctx, requestID, domain.StatusDone, fields)
 
 			if responseText == "" && attempt < g.cfg.MAX_RETRIES() {
 				// Empty response — auto-retry
-				_ = g.store.UpdateStatus(ctx, requestID, domain.StatusRetrying, map[string]any{
+				g.bestEffortUpdate(ctx, requestID, domain.StatusRetrying, map[string]any{
 					"retry_count": attempt + 1,
 					"error":       "empty response, auto-retrying",
 				})
@@ -275,7 +281,7 @@ func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.Di
 		// ── Sandbox conflict (exit -2) → retry ──
 		if exitCode == -2 && attempt < g.cfg.MAX_RETRIES() {
 			backoffS := sandboxBackoffS[min(attempt, len(sandboxBackoffS)-1)]
-			_ = g.store.UpdateStatus(ctx, requestID, domain.StatusRetrying, map[string]any{
+			g.bestEffortUpdate(ctx, requestID, domain.StatusRetrying, map[string]any{
 				"error": fmt.Sprintf("sandbox conflict, retry after %ds", backoffS),
 			})
 			g.logger.Info("sandbox conflict, retrying", "backoff_s", backoffS)
@@ -292,7 +298,7 @@ func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.Di
 		if len(errMsg) > maxErrorLen {
 			errMsg = errMsg[:maxErrorLen]
 		}
-		_ = g.store.UpdateStatus(ctx, requestID, domain.StatusFailed, map[string]any{
+		g.bestEffortUpdate(ctx, requestID, domain.StatusFailed, map[string]any{
 			"finished_at":   domain.NowUnix(),
 			"exit_code":     exitCode,
 			"error":         errMsg,
@@ -307,10 +313,12 @@ func (g *Gateway) Dispatch(ctx context.Context, req DispatchRequest) (*domain.Di
 	return &domain.DispatchResult{ExitCode: 1, Error: "exhausted retries"}, nil
 }
 
-// resolveTier converts a public tier name (e.g., "fast") to a concrete
-// provider-prefixed alias (e.g., "gemini-fast") based on availability and load.
+// resolveTier implements least-loaded load balancing: converts a public tier name
+// (e.g., "fast") to a concrete provider-prefixed alias (e.g., "gemini-fast").
+// It queries running counts for each alias in the tier and picks the least-loaded.
 // When multiple aliases have equal load, one is chosen at random to distribute
 // work across providers instead of always preferring the first in order.
+// Returns "" if the tier has no aliases or all providers are unavailable.
 func (g *Gateway) resolveTier(ctx context.Context, tier string) string {
 	aliases := g.cfg.Tiers[tier]
 	if len(aliases) == 0 {
@@ -397,4 +405,19 @@ func (g *Gateway) findBucketAlternative(ctx context.Context, alias string) strin
 	}
 
 	return pickBucketAlternative(bucket, alias, runningSet)
+}
+
+// bestEffortUpdate updates a request's status, logging a warning on failure.
+// Used throughout Dispatch for tracking updates that should not abort the dispatch.
+func (g *Gateway) bestEffortUpdate(ctx context.Context, id int64, status string, fields map[string]any) {
+	if err := g.store.UpdateStatus(ctx, id, status, fields); err != nil {
+		g.logger.Warn("best-effort update", "id", id, "status", status, "error", err)
+	}
+}
+
+// bestEffortUpdatePacing updates pacing state, logging a warning on failure.
+func (g *Gateway) bestEffortUpdatePacing(ctx context.Context, model string, fields map[string]any) {
+	if err := g.store.UpdatePacing(ctx, model, fields); err != nil {
+		g.logger.Warn("best-effort pacing update", "model", model, "error", err)
+	}
 }

@@ -11,8 +11,8 @@ import (
 	"github.com/midweste/mcp-cli-gateway/internal/gateway"
 )
 
-// MCPServer wraps the MCP server and gateway.
-type MCPServer struct {
+// Server wraps the MCP server and gateway.
+type Server struct {
 	mcp          *server.MCPServer
 	gateway      *gateway.Gateway
 	logger       *slog.Logger
@@ -20,7 +20,7 @@ type MCPServer struct {
 }
 
 // New creates a new MCP server with all gateway tools registered.
-func New(gw *gateway.Gateway, logger *slog.Logger, tiers map[string][]string) *MCPServer {
+func New(gw *gateway.Gateway, logger *slog.Logger, tiers map[string][]string) *Server {
 	// Build reverse map: alias → tier name
 	a2t := make(map[string]string)
 	for tier, aliases := range tiers {
@@ -28,7 +28,7 @@ func New(gw *gateway.Gateway, logger *slog.Logger, tiers map[string][]string) *M
 			a2t[alias] = tier
 		}
 	}
-	s := &MCPServer{
+	s := &Server{
 		mcp: server.NewMCPServer(
 			"mcp-cli-gateway",
 			"1.0.0",
@@ -81,7 +81,7 @@ REPORTING: Always report to user — on dispatch (count, tasks, tier), on comple
 }
 
 // StartStdio begins serving MCP over stdin/stdout.
-func (s *MCPServer) StartStdio(ctx context.Context) error {
+func (s *Server) StartStdio(ctx context.Context) error {
 	s.logger.Info("starting MCP server (stdio)")
 	stdioServer := server.NewStdioServer(s.mcp)
 	return stdioServer.Listen(ctx, os.Stdin, os.Stdout)

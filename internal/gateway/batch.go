@@ -91,9 +91,15 @@ func (g *Gateway) RunBatch(ctx context.Context, jobs []DispatchRequest) ([]domai
 	results := make([]domain.BatchResult, len(jobs))
 	var wg sync.WaitGroup
 
+	// Limit concurrent goroutines (safety net — practical count is 6-9 aliases).
+	const maxBatchGoroutines = 10
+	sem := make(chan struct{}, maxBatchGoroutines)
+
 	for _, group := range modelGroups {
 		wg.Add(1)
+		sem <- struct{}{} // acquire slot
 		go func(group []indexedJob) {
+			defer func() { <-sem }() // release slot
 			defer wg.Done()
 			// Jobs within same model run serially
 			for _, ij := range group {

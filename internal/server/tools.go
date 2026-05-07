@@ -9,7 +9,7 @@ import (
 	"github.com/midweste/mcp-cli-gateway/internal/gateway"
 )
 
-func (s *MCPServer) registerTools() {
+func (s *Server) registerTools() {
 	// ── gateway_dispatch ──
 	s.mcp.AddTool(
 		mcp.NewTool("gateway_dispatch",
@@ -39,32 +39,7 @@ func (s *MCPServer) registerTools() {
 				mcp.Description("If true, run in sandbox mode (default: full-auto / yolo)"),
 			),
 		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			dr := gateway.DispatchRequest{
-				Model:  argStr(args, "model"),
-				Prompt: argStr(args, "prompt"),
-				Label:  argStr(args, "label"),
-				Cwd:    argStr(args, "cwd"),
-			}
-			if v, ok := args["sandbox"].(bool); ok {
-				dr.Sandbox = v
-			}
-
-			if dr.Prompt == "" {
-				return mcp.NewToolResultError("prompt is required and must not be empty"), nil
-			}
-
-			if err := validateCwdAgainstRoots(ctx, s.mcp, dr.Cwd); err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-
-			result, err := s.gateway.Dispatch(ctx, dr)
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			return mcp.NewToolResultText(toJSON(result)), nil
-		},
+		s.handleDispatch,
 	)
 
 	// ── gateway_batch_dispatch ──
@@ -109,53 +84,7 @@ func (s *MCPServer) registerTools() {
 				}),
 			),
 		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			jobsRaw, ok := args["jobs"].([]any)
-			if !ok {
-				return mcp.NewToolResultError("jobs must be an array of objects"), nil
-			}
-
-			jobs := make([]gateway.DispatchRequest, 0, len(jobsRaw))
-			for i, j := range jobsRaw {
-				jm, ok := j.(map[string]any)
-				if !ok {
-					return mcp.NewToolResultError(
-						fmt.Sprintf("jobs[%d] must be an object with {model, prompt, ...}, got %T", i, j),
-					), nil
-				}
-				dr := gateway.DispatchRequest{
-					Model:  argStr(jm, "model"),
-					Prompt: argStr(jm, "prompt"),
-					Label:  argStr(jm, "label"),
-					Cwd:    argStr(jm, "cwd"),
-				}
-				if v, ok := jm["sandbox"].(bool); ok {
-					dr.Sandbox = v
-				}
-				jobs = append(jobs, dr)
-			}
-
-			// Validate all prompts and cwds
-			for i, j := range jobs {
-				if j.Prompt == "" {
-					return mcp.NewToolResultError(
-						fmt.Sprintf("jobs[%d]: prompt is required and must not be empty", i),
-					), nil
-				}
-				if err := validateCwdAgainstRoots(ctx, s.mcp, j.Cwd); err != nil {
-					return mcp.NewToolResultError(
-						fmt.Sprintf("jobs[%d]: %v", i, err),
-					), nil
-				}
-			}
-
-			results, err := s.gateway.RunBatch(ctx, jobs)
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			return mcp.NewToolResultText(toJSON(results)), nil
-		},
+		s.handleBatchDispatch,
 	)
 
 	// ── gateway_status ──
@@ -169,13 +98,7 @@ func (s *MCPServer) registerTools() {
 				OpenWorldHint:   boolPtr(false),
 			}),
 		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			status, err := s.gateway.Status(ctx)
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			return mcp.NewToolResultText(toJSON(s.aggregateByTier(status))), nil
-		},
+		s.handleStatus,
 	)
 
 	// ── gateway_jobs ──
@@ -189,13 +112,7 @@ func (s *MCPServer) registerTools() {
 				OpenWorldHint:   boolPtr(false),
 			}),
 		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			jobs, err := s.gateway.Jobs(ctx)
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			return mcp.NewToolResultText(toJSON(jobs)), nil
-		},
+		s.handleJobs,
 	)
 
 	// ── gateway_pacing ──
@@ -209,13 +126,7 @@ func (s *MCPServer) registerTools() {
 				OpenWorldHint:   boolPtr(false),
 			}),
 		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			pacing, err := s.gateway.Pacing(ctx)
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			return mcp.NewToolResultText(toJSON(pacing)), nil
-		},
+		s.handlePacing,
 	)
 
 	// ── gateway_stats ──
@@ -232,14 +143,7 @@ func (s *MCPServer) registerTools() {
 				mcp.Description("Time window, e.g. '1h', '2d', '30m'. Empty = lifetime"),
 			),
 		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			last := argStr(req.GetArguments(), "last")
-			stats, err := s.gateway.Stats(ctx, last)
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			return mcp.NewToolResultText(toJSON(stats)), nil
-		},
+		s.handleStats,
 	)
 
 	// ── gateway_errors ──
@@ -256,14 +160,7 @@ func (s *MCPServer) registerTools() {
 				mcp.Description("Time window, e.g. '1h', '2d'. Empty = lifetime"),
 			),
 		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			last := argStr(req.GetArguments(), "last")
-			errors, err := s.gateway.Errors(ctx, last)
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			return mcp.NewToolResultText(toJSON(errors)), nil
-		},
+		s.handleErrors,
 	)
 
 	// ── gateway_cancel ──
@@ -286,18 +183,7 @@ func (s *MCPServer) registerTools() {
 				mcp.Description("Cancel all jobs in a batch"),
 			),
 		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			result, err := s.gateway.Cancel(ctx,
-				argStr(args, "id"),
-				argStr(args, "model"),
-				argStr(args, "batch_id"),
-			)
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			return mcp.NewToolResultText(toJSON(result)), nil
-		},
+		s.handleCancel,
 	)
 
 	// ── gateway_retry ──
@@ -315,19 +201,7 @@ func (s *MCPServer) registerTools() {
 				mcp.Description("Job ID to retry (from gateway_errors)"),
 			),
 		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			idVal, ok := args["id"].(float64)
-			if !ok {
-				return mcp.NewToolResultError("id must be a numeric job ID. Use gateway_errors to see failed jobs."), nil
-			}
-			id := int64(idVal)
-			result, err := s.gateway.Retry(ctx, id)
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			return mcp.NewToolResultText(toJSON(result)), nil
-		},
+		s.handleRetry,
 	)
 
 	// ── gateway_result ──
@@ -345,23 +219,167 @@ func (s *MCPServer) registerTools() {
 				mcp.Description("Job ID to retrieve"),
 			),
 		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			idVal, ok := args["id"].(float64)
-			if !ok {
-				return mcp.NewToolResultError("id must be a numeric job ID. Use gateway_jobs to see active jobs."), nil
-			}
-			id := int64(idVal)
-			result, err := s.gateway.Result(ctx, id)
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			if result == nil {
-				return mcp.NewToolResultError("Job not found"), nil
-			}
-			return mcp.NewToolResultText(toJSON(result)), nil
-		},
+		s.handleResult,
 	)
+}
+
+// ── Tool handler methods ──
+
+func (s *Server) handleDispatch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := req.GetArguments()
+	dr := gateway.DispatchRequest{
+		Model:  argStr(args, "model"),
+		Prompt: argStr(args, "prompt"),
+		Label:  argStr(args, "label"),
+		Cwd:    argStr(args, "cwd"),
+	}
+	if v, ok := args["sandbox"].(bool); ok {
+		dr.Sandbox = v
+	}
+
+	if dr.Prompt == "" {
+		return mcp.NewToolResultError("prompt is required and must not be empty"), nil
+	}
+
+	if err := validateCwdAgainstRoots(ctx, s.mcp, dr.Cwd); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	result, err := s.gateway.Dispatch(ctx, dr)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText(toJSON(result)), nil
+}
+
+func (s *Server) handleBatchDispatch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := req.GetArguments()
+	jobsRaw, ok := args["jobs"].([]any)
+	if !ok {
+		return mcp.NewToolResultError("jobs must be an array of objects"), nil
+	}
+
+	jobs := make([]gateway.DispatchRequest, 0, len(jobsRaw))
+	for i, j := range jobsRaw {
+		jm, ok := j.(map[string]any)
+		if !ok {
+			return mcp.NewToolResultError(
+				fmt.Sprintf("jobs[%d] must be an object with {model, prompt, ...}, got %T", i, j),
+			), nil
+		}
+		dr := gateway.DispatchRequest{
+			Model:  argStr(jm, "model"),
+			Prompt: argStr(jm, "prompt"),
+			Label:  argStr(jm, "label"),
+			Cwd:    argStr(jm, "cwd"),
+		}
+		if v, ok := jm["sandbox"].(bool); ok {
+			dr.Sandbox = v
+		}
+		jobs = append(jobs, dr)
+	}
+
+	// Validate all prompts and cwds
+	for i, j := range jobs {
+		if j.Prompt == "" {
+			return mcp.NewToolResultError(
+				fmt.Sprintf("jobs[%d]: prompt is required and must not be empty", i),
+			), nil
+		}
+		if err := validateCwdAgainstRoots(ctx, s.mcp, j.Cwd); err != nil {
+			return mcp.NewToolResultError(
+				fmt.Sprintf("jobs[%d]: %v", i, err),
+			), nil
+		}
+	}
+
+	results, err := s.gateway.RunBatch(ctx, jobs)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText(toJSON(results)), nil
+}
+
+func (s *Server) handleStatus(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	status, err := s.gateway.Status(ctx)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText(toJSON(s.aggregateByTier(status))), nil
+}
+
+func (s *Server) handleJobs(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	jobs, err := s.gateway.Jobs(ctx)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText(toJSON(jobs)), nil
+}
+
+func (s *Server) handlePacing(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pacing, err := s.gateway.Pacing(ctx)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText(toJSON(pacing)), nil
+}
+
+func (s *Server) handleStats(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	last := argStr(req.GetArguments(), "last")
+	stats, err := s.gateway.Stats(ctx, last)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText(toJSON(stats)), nil
+}
+
+func (s *Server) handleErrors(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	last := argStr(req.GetArguments(), "last")
+	errors, err := s.gateway.Errors(ctx, last)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText(toJSON(errors)), nil
+}
+
+func (s *Server) handleCancel(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := req.GetArguments()
+	result, err := s.gateway.Cancel(ctx,
+		argStr(args, "id"),
+		argStr(args, "model"),
+		argStr(args, "batch_id"),
+	)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText(toJSON(result)), nil
+}
+
+func (s *Server) handleRetry(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	id, err := argInt64(req.GetArguments(), "id")
+	if err != nil {
+		return mcp.NewToolResultError("id must be a numeric job ID. Use gateway_errors to see failed jobs."), nil
+	}
+	result, gErr := s.gateway.Retry(ctx, id)
+	if gErr != nil {
+		return mcp.NewToolResultError(gErr.Error()), nil
+	}
+	return mcp.NewToolResultText(toJSON(result)), nil
+}
+
+func (s *Server) handleResult(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	id, err := argInt64(req.GetArguments(), "id")
+	if err != nil {
+		return mcp.NewToolResultError("id must be a numeric job ID. Use gateway_jobs to see active jobs."), nil
+	}
+	result, gErr := s.gateway.Result(ctx, id)
+	if gErr != nil {
+		return mcp.NewToolResultError(gErr.Error()), nil
+	}
+	if result == nil {
+		return mcp.NewToolResultError("Job not found"), nil
+	}
+	return mcp.NewToolResultText(toJSON(result)), nil
 }
 
 func argStr(args map[string]any, key string) string {
@@ -369,6 +387,16 @@ func argStr(args map[string]any, key string) string {
 		return v
 	}
 	return ""
+}
+
+// argInt64 extracts a float64 argument and converts to int64.
+// MCP/JSON transports deliver all numbers as float64.
+func argInt64(args map[string]any, key string) (int64, error) {
+	v, ok := args[key].(float64)
+	if !ok {
+		return 0, fmt.Errorf("%s: required (number)", key)
+	}
+	return int64(v), nil
 }
 
 func boolPtr(b bool) *bool {
@@ -380,7 +408,7 @@ var healthRank = map[string]int{"ok": 0, "busy": 1, "slow": 2, "saturated": 3}
 
 // aggregateByTier collapses alias-keyed status (codex-fast, gemini-fast, ...)
 // into tier-keyed status (lite, fast, deep) — the only names the AI sees.
-func (s *MCPServer) aggregateByTier(aliasStatus map[string]domain.ModelStatus) map[string]domain.ModelStatus {
+func (s *Server) aggregateByTier(aliasStatus map[string]domain.ModelStatus) map[string]domain.ModelStatus {
 	tierStatus := make(map[string]domain.ModelStatus)
 
 	for alias, st := range aliasStatus {

@@ -17,8 +17,8 @@ import (
 	"github.com/midweste/mcp-cli-gateway/internal/testutil"
 )
 
-// newTestMCPServer creates a fully wired MCPServer for handler testing.
-func newTestMCPServer(t *testing.T) *MCPServer {
+// newTestServer creates a fully wired Server for handler testing.
+func newTestServer(t *testing.T) *Server {
 	t.Helper()
 	cfg := config.Default()
 	cfg.DBPath = ":memory:"
@@ -43,7 +43,7 @@ func newTestMCPServer(t *testing.T) *MCPServer {
 	return New(gw, logger, cfg.Tiers)
 }
 
-func callTool(t *testing.T, s *MCPServer, name string, args map[string]any) *mcp.CallToolResult {
+func callTool(t *testing.T, s *Server, name string, args map[string]any) *mcp.CallToolResult {
 	t.Helper()
 	tool := s.mcp.GetTool(name)
 	if tool == nil {
@@ -65,7 +65,7 @@ func callTool(t *testing.T, s *MCPServer, name string, args map[string]any) *mcp
 }
 
 func TestHandler_Status(t *testing.T) {
-	s := newTestMCPServer(t)
+	s := newTestServer(t)
 	result := callTool(t, s, "gateway_status", nil)
 	if result == nil {
 		t.Fatal("nil result")
@@ -76,7 +76,7 @@ func TestHandler_Status(t *testing.T) {
 }
 
 func TestHandler_Jobs(t *testing.T) {
-	s := newTestMCPServer(t)
+	s := newTestServer(t)
 	result := callTool(t, s, "gateway_jobs", nil)
 	if result == nil {
 		t.Fatal("nil result")
@@ -84,7 +84,7 @@ func TestHandler_Jobs(t *testing.T) {
 }
 
 func TestHandler_Pacing(t *testing.T) {
-	s := newTestMCPServer(t)
+	s := newTestServer(t)
 	result := callTool(t, s, "gateway_pacing", nil)
 	if result == nil {
 		t.Fatal("nil result")
@@ -92,7 +92,7 @@ func TestHandler_Pacing(t *testing.T) {
 }
 
 func TestHandler_Stats(t *testing.T) {
-	s := newTestMCPServer(t)
+	s := newTestServer(t)
 	result := callTool(t, s, "gateway_stats", map[string]any{"last": "1h"})
 	if result == nil {
 		t.Fatal("nil result")
@@ -100,7 +100,7 @@ func TestHandler_Stats(t *testing.T) {
 }
 
 func TestHandler_Errors(t *testing.T) {
-	s := newTestMCPServer(t)
+	s := newTestServer(t)
 	result := callTool(t, s, "gateway_errors", map[string]any{"last": ""})
 	if result == nil {
 		t.Fatal("nil result")
@@ -108,7 +108,7 @@ func TestHandler_Errors(t *testing.T) {
 }
 
 func TestHandler_Cancel_NoArgs(t *testing.T) {
-	s := newTestMCPServer(t)
+	s := newTestServer(t)
 	result := callTool(t, s, "gateway_cancel", map[string]any{})
 	if result == nil {
 		t.Fatal("nil result")
@@ -120,7 +120,7 @@ func TestHandler_Cancel_NoArgs(t *testing.T) {
 }
 
 func TestHandler_Retry_InvalidID(t *testing.T) {
-	s := newTestMCPServer(t)
+	s := newTestServer(t)
 	result := callTool(t, s, "gateway_retry", map[string]any{"id": "not-a-number"})
 	if result == nil {
 		t.Fatal("nil result")
@@ -131,7 +131,7 @@ func TestHandler_Retry_InvalidID(t *testing.T) {
 }
 
 func TestHandler_Result_NotFound(t *testing.T) {
-	s := newTestMCPServer(t)
+	s := newTestServer(t)
 	result := callTool(t, s, "gateway_result", map[string]any{"id": float64(99999)})
 	if result == nil {
 		t.Fatal("nil result")
@@ -142,7 +142,7 @@ func TestHandler_Result_NotFound(t *testing.T) {
 }
 
 func TestHandler_BatchDispatch_InvalidJobs(t *testing.T) {
-	s := newTestMCPServer(t)
+	s := newTestServer(t)
 	result := callTool(t, s, "gateway_batch_dispatch", map[string]any{"jobs": "not-an-array"})
 	if result == nil {
 		t.Fatal("nil result")
@@ -153,7 +153,7 @@ func TestHandler_BatchDispatch_InvalidJobs(t *testing.T) {
 }
 
 func TestHandler_BatchDispatch_InvalidJobObject(t *testing.T) {
-	s := newTestMCPServer(t)
+	s := newTestServer(t)
 	result := callTool(t, s, "gateway_batch_dispatch", map[string]any{
 		"jobs": []any{"not-an-object"},
 	})
@@ -167,7 +167,7 @@ func TestHandler_BatchDispatch_InvalidJobObject(t *testing.T) {
 
 func TestHandler_Dispatch_NoExecutor(t *testing.T) {
 	// Gateway was created with nil executor — dispatch should fail gracefully.
-	s := newTestMCPServer(t)
+	s := newTestServer(t)
 	result := callTool(t, s, "gateway_dispatch", map[string]any{
 		"model":  "fast",
 		"prompt": "test prompt",
@@ -185,7 +185,7 @@ func TestHandler_Dispatch_NoExecutor(t *testing.T) {
 }
 
 func TestHandler_Stats_Lifetime(t *testing.T) {
-	s := newTestMCPServer(t)
+	s := newTestServer(t)
 	// Empty "last" → lifetime stats
 	result := callTool(t, s, "gateway_stats", map[string]any{})
 	if result == nil {
@@ -197,7 +197,7 @@ func TestHandler_Stats_Lifetime(t *testing.T) {
 }
 
 func TestHandler_Retry_ValidFailedJob(t *testing.T) {
-	s := newTestMCPServer(t)
+	s := newTestServer(t)
 	// Insert a failed request to retry
 	store, err := database.NewStore(config.Default(), ":memory:", slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	if err != nil {
@@ -220,7 +220,7 @@ func TestHandler_Retry_ValidFailedJob(t *testing.T) {
 }
 
 func TestHandler_Cancel_ByID(t *testing.T) {
-	s := newTestMCPServer(t)
+	s := newTestServer(t)
 	result := callTool(t, s, "gateway_cancel", map[string]any{"id": "999"})
 	if result == nil {
 		t.Fatal("nil result")
@@ -232,7 +232,7 @@ func TestHandler_Cancel_ByID(t *testing.T) {
 }
 
 func TestHandler_Result_InvalidID(t *testing.T) {
-	s := newTestMCPServer(t)
+	s := newTestServer(t)
 	result := callTool(t, s, "gateway_result", map[string]any{"id": "not-a-number"})
 	if result == nil {
 		t.Fatal("nil result")
@@ -243,7 +243,7 @@ func TestHandler_Result_InvalidID(t *testing.T) {
 }
 
 func TestHandler_Retry_MissingID(t *testing.T) {
-	s := newTestMCPServer(t)
+	s := newTestServer(t)
 	result := callTool(t, s, "gateway_retry", map[string]any{})
 	if result == nil {
 		t.Fatal("nil result")
